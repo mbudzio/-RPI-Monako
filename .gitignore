@@ -1,0 +1,7 @@
+# Ignoruj logi i tymczasowe dane
+*.log
+*.log.*
+*.swp
+*.tmp
+/var/log/*
+/mnt/backup/*
