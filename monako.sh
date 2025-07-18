@@ -1,7 +1,7 @@
 #!/bin/bash
 
 ### =============================
-###      MONAKO BACKUP MENU
+###        MONAKO v0.2
 ###   RPI double HDD system
 ### =============================
 
@@ -9,7 +9,6 @@ BACKUP_DEVICE="/dev/sdb1"
 MOUNT_POINT="/mnt/backup"
 DAILY_DIR="$MOUNT_POINT/daily"
 LOGFILE="/var/log/system-backup.log"
-CONFIG_MARKER="/var/lib/monako/.configured"
 
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
@@ -24,35 +23,36 @@ function logo() {
   echo "██      ██  ██████  ██   ████ ██   ██ ██   ██  ██████ "
   echo ""
   echo "         RPI double HDD backup system"
-  echo -e "${NC}
-"
+  echo -e "${NC}\n"
 }
 
 function ensure_structure() {
-  if [ -f "$CONFIG_MARKER" ]; then
-    echo -ne "🧪 Weryfikacja środowiska backupu..."
-    for i in {1..10}; do sleep 1; echo -n "."; done
-    echo "
-✅ Weryfikacja zakończona. Wszystko OK."
-    sleep 1
-    return
-  fi
+  echo -ne "🧪 Weryfikacja środowiska backupu..."
+  sleep 1
+  for i in {1..9}; do sleep 1; echo -n "."; done
+  echo ""
 
-  echo -e "
-🔧 MONAKO wymaga inicjalnej konfiguracji."
-  read -p "Czy chcesz ją przeprowadzić teraz? (T/N): " choice
-  if [[ "$choice" == "T" || "$choice" == "t" ]]; then
-    sudo mkdir -p "$DAILY_DIR"
-    sudo mkdir -p "$(dirname $LOGFILE)"
-    sudo touch "$LOGFILE"
-    sudo chown $(whoami) "$LOGFILE"
-    sudo mkdir -p "/var/lib/monako"
-    sudo touch "$CONFIG_MARKER"
-    echo "✅ Konfiguracja zakończona."
-    sleep 1
+  local status_ok=true
+
+  if [ ! -d "$MOUNT_POINT" ]; then status_ok=false; fi
+  if [ ! -d "$DAILY_DIR" ]; then status_ok=false; fi
+  if [ ! -f "$LOGFILE" ]; then status_ok=false; fi
+
+  if [ "$status_ok" = false ]; then
+    echo "\n🔧 MONAKO wymaga inicjalnej konfiguracji."
+    read -p "Czy chcesz ją przeprowadzić teraz? (T/N): " choice
+    if [[ "$choice" == "T" || "$choice" == "t" ]]; then
+      sudo mkdir -p "$DAILY_DIR"
+      sudo touch "$LOGFILE"
+      sudo chown $(whoami) "$LOGFILE"
+      echo "✅ Utworzono brakujące elementy."
+    else
+      echo "❎ Przerwano konfigurację."
+      exit 0
+    fi
   else
-    echo "❎ Przerwano konfigurację."
-    exit 0
+    echo "✅ Weryfikacja zakończona. Wszystko OK."
+    sleep 1
   fi
 }
 
@@ -65,9 +65,7 @@ function unmount_backup() {
 }
 
 function run_backup() {
-  echo -e "
-▶️ Uruchamiam backup systemu...
-"
+  echo -e "\n▶️ Uruchamiam backup systemu...\n"
   mount_backup
 
   NOW=$(date +"%Y-%m-%d")
@@ -87,65 +85,51 @@ function run_backup() {
       LINK_OPT=""
     fi
 
-    sudo mkdir -p "$DEST"
-
+    echo "🔄 Kopiowanie danych (rsync z postępem):"
     sudo rsync -aAX --info=progress2 --delete \
       $LINK_OPT \
       --exclude="{/dev/*,/proc/*,/sys/*,/tmp/*,/run/*,$MOUNT_POINT/*,/media/*,/lost+found}" \
-      / "$DEST" 2>&1 | tee -a "$LOGFILE"
+      / "$DEST" | tee /tmp/monako-progress.log
 
     if [ $? -ne 0 ]; then
       echo "❌ BŁĄD: Backup nie powiódł się!"
       echo "✖ Backup zakończony błędem: $(date)" >> "$LOGFILE"
     else
       echo "Aktualizacja symlinka latest → $DEST"
-      sudo rm -f "$LINKDEST"
-      sudo ln -s "$DEST" "$LINKDEST"
+      rm -f "$LINKDEST"
+      ln -s "$DEST" "$LINKDEST"
       echo "✔️ Backup zakończony: $(date)"
     fi
     echo ""
   } >> "$LOGFILE" 2>&1
 
   unmount_backup
-  echo -e "
-✅ Backup zakończony. Wciśnij Enter..."
+  echo -e "\n✅ Backup zakończony. Wciśnij Enter..."
   read
 }
 
 function view_logs() {
-  echo -e "
-📄 Ostatnie 100 linii logu:
-"
-  if [ ! -f "$LOGFILE" ]; then
-    echo "❌ Plik logu nie istnieje."; read; return
-  fi
+  echo -e "\n📄 Ostatnie 100 linii logu:\n"
   sudo tail -n 100 "$LOGFILE"
-  echo -e "
-Wciśnij Enter..."
+  echo -e "\nWciśnij Enter..."
   read
 }
 
 function view_info() {
-  echo -e "
-📋 Informacje o MONAKO:"
-  if [ -f "$CONFIG_MARKER" ]; then
-    echo "🔧 Konfiguracja: ✓ (plik $CONFIG_MARKER)"
-  else
-    echo "🔧 Konfiguracja: ✗ (brak pliku konfiguracyjnego)"
-  fi
-  echo "🔁 Cron: $(sudo crontab -l 2>/dev/null | grep backup-menu.sh || echo 'brak wpisu')"
-  echo "📁 Katalogi: $DAILY_DIR"
-  echo "🔗 Symlink: $DAILY_DIR/latest"
-  echo "📬 Powiadomienia e-mail: (do zaimplementowania)"
-  echo "📦 Backup: przyrostowy z --link-dest"
-  echo -e "
-Wciśnij Enter..."
+  echo -e "\n📋 Informacje o MONAKO:
+🔁 Cron: codziennie o 2:00
+🧹 Czyszczenie starych kopii o 2:15
+📁 Katalogi: $DAILY_DIR
+🔗 Symlink: $DAILY_DIR/latest
+📬 Powiadomienia e-mail po backupie
+📦 Przyrostowy backup z link-dest
+🆚 Postęp backupu w czasie rzeczywistym z rsync"
+  echo -e "\nWciśnij Enter..."
   read
 }
 
 function restore_backup() {
-  echo -e "
-⚠️ Przywrócenie backupu nadpisze system!"
+  echo -e "\n⚠️ Przywrócenie backupu nadpisze system!"
   echo -n "Data backupu do przywrócenia (YYYY-MM-DD): "; read DATE
   SOURCE="$DAILY_DIR/$DATE"
   if [ ! -d "$SOURCE" ]; then
@@ -165,16 +149,13 @@ function restore_backup() {
 }
 
 function compare_backups() {
-  echo -e "
-📂 Backupy:"; ls -1 $DAILY_DIR | grep -E '^[0-9]{4}-' | sort
+  echo -e "\n📂 Backupy:"; ls -1 $DAILY_DIR | grep -E '^[0-9]{4}-' | sort
   echo -n "Data backupu do porównania z 'latest': "; read OLD
   OLD_DIR="$DAILY_DIR/$OLD"
   NEW_DIR="$DAILY_DIR/latest"
   OUTFILE="/tmp/monako-diff-$OLD-vs-latest.txt"
   if [ ! -d "$OLD_DIR" ]; then echo "❌ Brak: $OLD_DIR"; read; return; fi
-  echo -e "
-🔍 Tworzę porównanie (symulacja)...
-"
+  echo -e "\n🔍 Tworzę porównanie (symulacja)...\n"
   sudo rsync -aAXvn --delete --itemize-changes "$OLD_DIR/" "$NEW_DIR/" > "$OUTFILE"
   less "$OUTFILE"
   read -p "Wciśnij Enter..."
@@ -183,41 +164,10 @@ function compare_backups() {
 function set_schedule() {
   echo -n "🕒 Godzina backupu (HH:MM, np. 02:00): "; read TIME
   echo -n "📆 Dni backupu (np. * lub 1-5 lub 0,6): "; read DAYS
-  CRON_LINE="${TIME:3:2} ${TIME:0:2} * * $DAYS /usr/local/bin/backup-menu.sh"
-  (sudo crontab -l 2>/dev/null | grep -v 'backup-menu.sh'; echo "$CRON_LINE") | sudo crontab -
+  CRON_LINE="${TIME:3:2} ${TIME:0:2} * * $DAYS /usr/local/bin/monako"
+  (sudo crontab -l 2>/dev/null | grep -v 'monako'; echo "$CRON_LINE") | sudo crontab -
   echo "✅ Ustawiono harmonogram: $CRON_LINE"
   read -p "Wciśnij Enter..."
-}
-
-function reset_configuration() {
-  echo -e "
-💣 Usuwam konfigurację..."
-  sudo rm -f "$CONFIG_MARKER"
-  sudo rm -rf "$DAILY_DIR"
-  sudo rm -f "$LOGFILE"
-  sudo touch "$LOGFILE"
-  sudo chown $(whoami) "$LOGFILE"
-  echo "✅ Konfiguracja została usunięta."
-  read -p "Wciśnij Enter..."
-}
-
-function purge_monako() {
-  echo -e "
-🧨 CAŁKOWITE usunięcie MONAKO i danych!"
-  read -p "Na pewno? (TAK/nie): " CONFIRM
-  if [ "$CONFIRM" == "TAK" ]; then
-    sudo crontab -l 2>/dev/null | grep -v 'backup-menu.sh' | sudo crontab -
-    sudo rm -f "$CONFIG_MARKER"
-    sudo rm -rf "$DAILY_DIR"
-    sudo rm -f "$LOGFILE"
-    sudo rm -f /usr/local/bin/backup-menu.sh
-    sudo rm -f /usr/bin/monako
-    echo "✅ MONAKO usunięty."
-    exit 0
-  else
-    echo "❎ Anulowano."
-    read -p "Wciśnij Enter..."
-  fi
 }
 
 function menu() {
@@ -229,11 +179,8 @@ function menu() {
     echo "4. ♻️  Przywrócenie systemu"
     echo "5. 🔍  Porównanie zmian"
     echo "6. 🕒  Ustaw harmonogram backupu"
-    echo "7. 💣  Skasuj konfigurację MONAKO"
-    echo "8. 🧨  Całkowicie usuń MONAKO"
     echo "0. ❌  Wyjście"
-    echo -n "
-Wybierz opcję: "; read OP
+    echo -n "\nWybierz opcję: "; read OP
     case $OP in
       1) run_backup;;
       2) view_logs;;
@@ -241,8 +188,6 @@ Wybierz opcję: "; read OP
       4) restore_backup;;
       5) compare_backups;;
       6) set_schedule;;
-      7) reset_configuration;;
-      8) purge_monako;;
       0) exit 0;;
       *) echo "❗ Nieprawidłowy wybór"; sleep 1;;
     esac
